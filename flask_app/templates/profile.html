@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+
+{% block content %}
+    <h1>Профиль</h1>
+    <p>Имя: {{ user.first_name }} {{ user.last_name }}</p>
+    <p>Email: {{ user.email }}</p>
+    <p>Логин: {{ user.username }}</p>
+    <a href="{{ url_for('change_password') }}">Изменить пароль</a>
+    <a href="{{ url_for('logout') }}">Выйти из системы</a>
+{% endblock %}
