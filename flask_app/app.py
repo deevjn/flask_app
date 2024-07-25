@@ -1,21 +1,30 @@
-from flask import Flask, render_template, redirect, url_for, request, flash, session
+from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_migrate import Migrate
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 import os
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
+
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
 # Модели
-class User(db.Model):
+class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(128), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     first_name = db.Column(db.String(80), nullable=False)
     last_name = db.Column(db.String(80), nullable=False)
+
+    def __repr__(self):
+        return f'<User {self.username}>'
 
 class Employee(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -26,6 +35,8 @@ class Employee(db.Model):
 class PC(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), unique=True, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    user = db.relationship('User', backref='pcs')
 
     def __repr__(self):
         return f'<User {self.username}>'
@@ -42,7 +53,7 @@ def login():
         password = request.form['password']
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
-            session['user_id'] = user.id
+            login_user(user)
             flash('Успешный вход!', 'success')
             return redirect(url_for('home'))
         else:
@@ -85,146 +96,122 @@ def forgot_password():
 
 # Страница смены пароля
 @app.route('/change_password', methods=['GET', 'POST'])
+@login_required
 def change_password():
-    if 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        if request.method == 'POST':
-            new_password = request.form['new_password']
-            confirm_password = request.form['confirm_password']
-            if new_password == confirm_password:
-                user.password = generate_password_hash(new_password)
-                db.session.commit()
-                flash('Пароль успешно изменен!', 'success')
-                return redirect(url_for('profile'))
-            else:
-                flash('Пароли не совпадают', 'error')
-        return render_template('change_password.html', user=user)
-    else:
-        return redirect(url_for('login'))
+    user = current_user
+    if request.method == 'POST':
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+        if new_password == confirm_password:
+            user.password = generate_password_hash(new_password)
+            db.session.commit()
+            flash('Пароль успешно изменен!', 'success')
+            return redirect(url_for('profile'))
+        else:
+            flash('Пароли не совпадают', 'error')
+    return render_template('change_password.html', user=user)
 
 # Главная страница
 @app.route('/')
 @app.route('/home')
+@login_required
 def home():
-    if 'user_id' in session:
-        return render_template('home.html')
-    else:
-        return redirect(url_for('login'))
+    return render_template('home.html')
 
 # Страница профиля
 @app.route('/profile')
+@login_required
 def profile():
-    if 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        return render_template('profile.html', user=user)
-    else:
-        return redirect(url_for('login'))
+    user = current_user
+    return render_template('profile.html', user=user)
 
 # Страница сотрудников
 @app.route('/employees')
+@login_required
 def employees():
-    if 'user_id' in session:
-        employees = Employee.query.all()
-        return render_template('employees.html', employees=employees)
-    else:
-        return redirect(url_for('login'))
+    employees = Employee.query.all()
+    return render_template('employees.html', employees=employees)
 
 # Добавление сотрудника
 @app.route('/employees/add', methods=['POST'])
+@login_required
 def add_employee():
-    if 'user_id' in session:
-        first_name = request.form.get('first_name')
-        last_name = request.form.get('last_name')
-        position = request.form.get('position')
+    first_name = request.form.get('first_name')
+    last_name = request.form.get('last_name')
+    position = request.form.get('position')
 
-        new_employee = Employee(first_name=first_name, last_name=last_name, position=position)
-        db.session.add(new_employee)
-        db.session.commit()
+    new_employee = Employee(first_name=first_name, last_name=last_name, position=position)
+    db.session.add(new_employee)
+    db.session.commit()
 
-        flash('Сотрудник добавлен', 'success')
-        return redirect(url_for('employees'))
-    else:
-        return redirect(url_for('login'))
+    flash('Сотрудник добавлен', 'success')
+    return redirect(url_for('employees'))
 
 # Изменение сотрудника
 @app.route('/employees/<int:employee_id>/edit', methods=['GET', 'POST'])
+@login_required
 def edit_employee(employee_id):
-    if 'user_id' in session:
-        employee = Employee.query.get_or_404(employee_id)
+    employee = Employee.query.get_or_404(employee_id)
 
-        if request.method == 'POST':
-            employee.first_name = request.form.get('first_name')
-            employee.last_name = request.form.get('last_name')
-            employee.position = request.form.get('position')
-            db.session.commit()
-            flash('Сотрудник обновлен', 'success')
-            return redirect(url_for('employees'))
+    if request.method == 'POST':
+        employee.first_name = request.form.get('first_name')
+        employee.last_name = request.form.get('last_name')
+        employee.position = request.form.get('position')
+        db.session.commit()
+        flash('Сотрудник обновлен', 'success')
+        return redirect(url_for('employees'))
 
-        return render_template('edit_employee.html', employee=employee)
-    else:
-        return redirect(url_for('login'))
+    return render_template('edit_employee.html', employee=employee)
 
 # Удаление сотрудника
 @app.route('/employees/<int:employee_id>/delete', methods=['POST'])
+@login_required
 def delete_employee(employee_id):
-    if 'user_id' in session:
-        employee = Employee.query.get_or_404(employee_id)
-        db.session.delete(employee)
-        db.session.commit()
-        flash('Сотрудник удален', 'success')
-        return redirect(url_for('employees'))
-    else:
-        return redirect(url_for('login'))
+    employee = Employee.query.get_or_404(employee_id)
+    db.session.delete(employee)
+    db.session.commit()
+    flash('Сотрудник удален', 'success')
+    return redirect(url_for('employees'))
 
 @app.route('/pcs', methods=['GET', 'POST'])
+@login_required
 def pcs():
+    pcs = PC.query.all()
+    employees = Employee.query.all()
     if request.method == 'POST':
         name = request.form['name']
         new_pc = PC(name=name)
         db.session.add(new_pc)
         db.session.commit()
-        flash('ПК добавлен', 'success')
         return redirect(url_for('pcs'))
-    pcs = PC.query.all()
-    employees = User.query.all()
     return render_template('pcs.html', pcs=pcs, employees=employees)
 
 @app.route('/assign_pc/<int:pc_id>', methods=['POST'])
+@login_required
 def assign_pc(pc_id):
     pc = PC.query.get_or_404(pc_id)
-    employee_id = int(request.form['employee_id'])
-    employee = User.query.get_or_404(employee_id)
-    pc.user = employee
-    db.session.commit()
-    flash('ПК присвоен сотруднику', 'success')
+    employee_id = request.form.get('employee_id')
+    if employee_id:
+        employee = Employee.query.get_or_404(employee_id)
+        pc.user = employee
+        db.session.commit()
+    else:
+        pc.user = None
+        db.session.commit()
     return redirect(url_for('pcs'))
 
 # Выход из системы
 @app.route('/logout')
+@login_required
 def logout():
-    session.pop('user_id', None)
+    logout_user()
     flash('Вы вышли из системы', 'success')
     return redirect(url_for('login'))
 
-# Проверка аутентификации
-def is_authenticated():
-    return 'user_id' in session
-
-# Декоратор для проверки аутентификации
-def login_required(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        if is_authenticated():
-            return func(*args, **kwargs)
-        else:
-            flash('Авторизация требуется', 'error')
-            return redirect(url_for('login'))
-    return wrapper
-
-# Применение декоратора к необходимым страницам
-# (кроме login, register, forgot_password)
-app.add_url_rule('/home', 'home', home, methods=['GET'])
-app.add_url_rule('/profile', 'profile', profile, methods=['GET'])
+# Загрузка пользователя по ID для Flask-Login
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 if __name__ == '__main__':
     app.run(debug=True)
